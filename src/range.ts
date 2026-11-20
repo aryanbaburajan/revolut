@@ -7,6 +7,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
  const targets = new THREE.Group();
  scene.add(targets);
  const bodyMaterial = new THREE.MeshBasicMaterial({map:load('zombie-torso.png'), alphaTest:.3, side:THREE.DoubleSide});
+ const alternateBodyMaterial = new THREE.MeshBasicMaterial({map:load('zombie-torso-2.png'), alphaTest:.3, side:THREE.DoubleSide});
  const armMaterial = new THREE.MeshBasicMaterial({map:load('zombie-arm.png'), alphaTest:.3, side:THREE.DoubleSide});
  const legMaterial = new THREE.MeshBasicMaterial({map:load('zombie-leg.png'), alphaTest:.3, side:THREE.DoubleSide});
  const colors = ['#ff1744', '#ff8500', '#fff000', '#25ed45', '#00d9ff', '#3b48ff', '#ed20ff'];
@@ -88,12 +89,13 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
  const capacity = activeLimit + spawns.length;
  const batches = [
    new THREE.InstancedMesh(bodyGeometry, bodyMaterial, capacity),
+   new THREE.InstancedMesh(bodyGeometry, alternateBodyMaterial, capacity),
    new THREE.InstancedMesh(armGeometry, armMaterial, capacity),
    new THREE.InstancedMesh(armGeometry, armMaterial, capacity),
    new THREE.InstancedMesh(legGeometry, legMaterial, capacity),
    new THREE.InstancedMesh(legGeometry, legMaterial, capacity),
  ];
- for (const mesh of batches) {
+ for (const [batchIndex, mesh] of batches.entries()) {
    mesh.count = 0;
    mesh.frustumCulled = false;
    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -101,16 +103,18 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
    mesh.raycast = (raycaster, intersections) => {
      const hits: THREE.Intersection[] = [];
      raycast(raycaster, hits);
-     intersections.push(...hits.filter(hit => hit.instanceId !== undefined && hit.instanceId < zombies.length));
+     intersections.push(...hits.filter(hit => hit.instanceId !== undefined && hit.instanceId < zombies.length && (batchIndex >= 2 || zombies[hit.instanceId].torsoVariant === batchIndex)));
    };
    targets.add(mesh);
  }
+ const hiddenBodyMatrix = new THREE.Matrix4().makeTranslation(0, -100000, 0);
  function renderInstances() {
    const all = [...zombies, ...fallen];
    all.forEach((zombie, index) => {
      zombie.group.updateMatrixWorld(true);
-     const parts = [zombie.spriteBody, ...zombie.arms.map((arm:THREE.Group) => arm.children[0]), ...zombie.legs.map((leg:THREE.Group) => leg.children[0])];
-     parts.forEach((part:THREE.Object3D, batch:number) => batches[batch].setMatrixAt(index, part.matrixWorld));
+     for (let variant = 0; variant < 2; variant++) batches[variant].setMatrixAt(index, zombie.torsoVariant === variant ? zombie.spriteBody.matrixWorld : hiddenBodyMatrix);
+     const parts = [...zombie.arms.map((arm:THREE.Group) => arm.children[0]), ...zombie.legs.map((leg:THREE.Group) => leg.children[0])];
+     parts.forEach((part:THREE.Object3D, batch:number) => batches[batch + 2].setMatrixAt(index, part.matrixWorld));
    });
    for (const mesh of batches) { mesh.count = all.length; mesh.boundingSphere = null; mesh.instanceMatrix.clearUpdateRanges(); mesh.instanceMatrix.addUpdateRange(0, all.length * 16); mesh.instanceMatrix.needsUpdate = true; }
  }
@@ -125,6 +129,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
  let lastMode = '';
  function activate(spawn:any, i:number) {
    const {x,z} = spawn;
+   if (spawn.torsoVariant === undefined) spawn.torsoVariant = Math.random() < .5 ? 0 : 1;
    const group = new THREE.Group();
    group.scale.setScalar(visualScale);
    const body = new THREE.Object3D();
@@ -147,7 +152,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
    const bodyPhysics = world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x,spawn.y ?? zombieHalfHeight+.02,z));
    const collider = world.createCollider(R.ColliderDesc.capsule(zombieHalfHeight-radius,radius).setSensor(true), bodyPhysics);
    group.position.set(x,(spawn.y ?? zombieHalfHeight+.02)-zombieHalfHeight-.02,z);
-   const zombie = {group, spriteBody:body, arms, legs, body:bodyPhysics, collider, x, z, vx:spawn.vx || 0, vz:spawn.vz || 0, hit:0, health:spawn.health, spawn, phase:i * .7, simulationSlot:i % 3};
+   const zombie = {group, spriteBody:body, torsoVariant:spawn.torsoVariant, arms, legs, body:bodyPhysics, collider, x, z, vx:spawn.vx || 0, vz:spawn.vz || 0, hit:0, health:spawn.health, spawn, phase:i * .7, simulationSlot:i % 3};
    spawn.active = zombie;
    zombies.push(zombie);
  }
@@ -330,7 +335,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
      zombie.group.position.set(position.x, position.y - zombieHalfHeight - .02 + .06, position.z);
      zombie.group.rotation.order = 'YXZ';
      zombie.group.rotation.z = 0;
-     fallen.push({group:zombie.group, spriteBody:zombie.spriteBody, arms:zombie.arms, legs:zombie.legs, started:now, limbs:[...zombie.arms, ...zombie.legs].map((pivot:THREE.Group) => ({pivot, angle:pivot.rotation.x}))});
+     fallen.push({group:zombie.group, spriteBody:zombie.spriteBody, torsoVariant:zombie.torsoVariant, arms:zombie.arms, legs:zombie.legs, started:now, limbs:[...zombie.arms, ...zombie.legs].map((pivot:THREE.Group) => ({pivot, angle:pivot.rotation.x}))});
      zombie.spawn.dead = true;
      zombie.spawn.active = null;
      world.removeRigidBody(zombie.body);
