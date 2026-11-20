@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 /** Arcade jeep: +Z local is rear; front points along -Z. */
-export function createJeep(scene:THREE.Scene, world:any, R:any, playerCollider:any){
- const group=new THREE.Group();group.name='jeep';group.position.set(0,0,8.5);group.rotation.y=-Math.PI/2;scene.add(group);
+export function createJeep(scene:THREE.Scene, world:any, R:any, playerCollider:any, spawn = { x: 0, z: 5 }, buildingColliderHandles:Set<number> = new Set()){
+ const group=new THREE.Group();group.name='jeep';group.position.set(spawn.x,0,spawn.z);group.rotation.y=-Math.PI/2;scene.add(group);
  const loader=new THREE.TextureLoader();
  function inkTexture(name:string){const map=loader.load(`${import.meta.env.BASE_URL}assets/${name}`);map.colorSpace=THREE.SRGBColorSpace;map.wrapS=map.wrapT=THREE.RepeatWrapping;return map;}
  const body=new THREE.MeshBasicMaterial({map:inkTexture('fighter-metal.png')}),dark=new THREE.MeshBasicMaterial({map:inkTexture('suv-tire.png')}),metal=new THREE.MeshBasicMaterial({map:inkTexture('suv-metal.png')}),seat=new THREE.MeshBasicMaterial({map:inkTexture('suv-seat.png')});
@@ -39,36 +39,37 @@ export function createJeep(scene:THREE.Scene, world:any, R:any, playerCollider:a
  const accelerator=new THREE.Group(),brake=new THREE.Group();accelerator.position.set(-.29,.48,-.43);brake.position.set(-.55,.48,-.43);group.add(accelerator,brake);part(accelerator,0,-.12,0,.09,.25,.05,metal);part(brake,0,-.12,0,.12,.25,.05,metal);
  const gear=new THREE.Group();gear.position.set(.02,.66,.05);group.add(gear);part(gear,0,.15,0,.035,.30,.035,metal);part(gear,0,.31,0,.09,.09,.09,dark);
  let speed=0,driving=false,steer=0,gearNumber=1,wheelSpin=0;
+ let velocityX=0,velocityZ=0;
  const identity = {x:0,y:0,z:0,w:1};
- function isClear(p:{x:number,z:number}, _colliders:unknown, radius=.16){
-  return !world.intersectionWithShape({x:p.x,y:.5,z:p.z},identity,new R.Ball(radius),R.QueryFilterFlags.EXCLUDE_SENSORS,undefined,playerCollider);
+ function isClear(p:{x:number,z:number}, _colliders:unknown, radius=.16, buildingsOnly=false){
+  return !world.intersectionWithShape({x:p.x,y:.5,z:p.z},identity,new R.Ball(radius),R.QueryFilterFlags.EXCLUDE_SENSORS,undefined,playerCollider,undefined,buildingsOnly ? (collider:any)=>buildingColliderHandles.has(collider.handle) : undefined);
  }
  const colliders = null;
- function clear(x:number,z:number,angle:number){const sin=Math.sin(angle),cos=Math.cos(angle);for(const [sx,sz] of [[-.68,-1.35],[.68,-1.35],[-.68,1.35],[.68,1.35],[0,0]])if(!isClear({x:x+sx*cos+sz*sin,z:z-sx*sin+sz*cos},colliders,.16))return false;return true;}
- // Select an unobstructed position near the player's starting point.
- for(let radius=4;radius<50;radius+=2){
-  let found=false;
-  for(let i=0;i<16;i++){
-   const angle=i*Math.PI/8,x=Math.sin(angle)*radius,z=5+Math.cos(angle)*radius;
-   if(clear(x,z,group.rotation.y)){group.position.set(x,0,z);found=true;break;}
-  }
-  if(found)break;
- }
+ function clear(x:number,z:number,angle:number){const sin=Math.sin(angle),cos=Math.cos(angle);for(const [sx,sz] of [[-.68,-1.35],[.68,-1.35],[-.68,1.35],[.68,1.35],[0,0]])if(!isClear({x:x+sx*cos+sz*sin,z:z-sx*sin+sz*cos},colliders,.16,true))return false;return true;}
  group.updateMatrixWorld(true);
- function enter(camera:THREE.Camera){if(driving||camera.position.distanceTo(group.position)>3)return false;driving=true;speed=0;return true;}
+ function enter(camera:THREE.Camera){if(driving||camera.position.distanceTo(group.position)>3)return false;driving=true;return true;}
  function exit(camera:THREE.Camera){if(!driving)return false;group.updateMatrixWorld(true);const positions=[-1.1,1.1].map(x=>new THREE.Vector3(x,1,0).applyMatrix4(group.matrixWorld));camera.position.copy(positions.find(p=>isClear(p,colliders,.2)) || new THREE.Vector3(0,2.2,0).applyMatrix4(group.matrixWorld));driving=false;return true;}
  function update(dt:number,keys:Set<string>,camera:THREE.Camera,onRunOver?:(x:number,z:number,angle:number)=>void){
   const forward=driving&&keys.has('KeyW'),back=driving&&keys.has('KeyS'),handbrake=driving&&keys.has('Space');
-  const braking=handbrake||(back&&speed>.05)||(forward&&speed<-.05);
+  const sin=Math.sin(group.rotation.y),cos=Math.cos(group.rotation.y);
+  let longitudinal=-sin*velocityX-cos*velocityZ;
+  let lateral=cos*velocityX-sin*velocityZ;
+  const braking=handbrake||(back&&longitudinal>.05)||(forward&&longitudinal<-.05);
   const desired=driving?(+keys.has('KeyA')-+keys.has('KeyD')):0;steer+=(desired-steer)*(1-Math.exp(-8*dt));
-  if(braking){const amount=9*dt;speed=Math.sign(speed)*Math.max(0,Math.abs(speed)-amount);}
-  else if(forward!==back)speed+=(forward?5:-4)*dt;
-  else speed*=Math.exp(-1.4*dt);
-  speed=THREE.MathUtils.clamp(speed,-3,12);
+  if(braking){const amount=(handbrake?3:9)*dt;longitudinal=Math.sign(longitudinal)*Math.max(0,Math.abs(longitudinal)-amount);}
+  else if(forward!==back)longitudinal+=(forward?5:-4)*dt;
+  else longitudinal*=Math.exp(-(driving?.35:2)*dt);
+  longitudinal=THREE.MathUtils.clamp(longitudinal,-3,12);
+  // The chassis can rotate faster than its travel direction; the handbrake loosens lateral grip.
+  lateral*=Math.exp(-(handbrake?.65:3.2)*dt);
+  velocityX=-sin*longitudinal+cos*lateral;
+  velocityZ=-cos*longitudinal-sin*lateral;
+  speed=longitudinal;
   gearNumber=speed<-.05?-1:speed<2.5?1:speed<5.5?2:3;
-  const steps=Math.max(1,Math.ceil(Math.abs(speed*dt)/.15)),stepDt=dt/steps;
-  for(let i=0;i<steps;i++){const angle=group.rotation.y+steer*speed*.28*stepDt;const nx=group.position.x-Math.sin(angle)*speed*stepDt,nz=group.position.z-Math.cos(angle)*speed*stepDt;
-   if(clear(nx,nz,angle)){group.position.x=nx;group.position.z=nz;group.rotation.y=angle;if(driving && Math.abs(speed)>=1) onRunOver?.(nx,nz,angle);}else{speed=0;break;}}
+  const travelSpeed=Math.hypot(velocityX,velocityZ);
+  const steps=Math.max(1,Math.ceil(travelSpeed*dt/.15)),stepDt=dt/steps;
+  for(let i=0;i<steps;i++){const angle=group.rotation.y+steer*THREE.MathUtils.clamp(speed,-6,8)*(handbrake?.27:.20)*stepDt;const nx=group.position.x+velocityX*stepDt,nz=group.position.z+velocityZ*stepDt;
+   if(clear(nx,nz,angle)){group.position.x=nx;group.position.z=nz;group.rotation.y=angle;if(driving && travelSpeed>=1) onRunOver?.(nx,nz,angle);}else{speed=0;velocityX=0;velocityZ=0;break;}}
   animate(dt,speed,steer,!!forward,!!back,braking);
   if(driving){group.updateMatrixWorld(true);camera.position.copy(new THREE.Vector3(-.47,1.48,.15).applyMatrix4(group.matrixWorld));}
  }
@@ -77,7 +78,7 @@ export function createJeep(scene:THREE.Scene, world:any, R:any, playerCollider:a
   steering.rotation.z=steer*.85;accelerator.rotation.x=(forward||(back&&speed<=0))&&!braking?-.45:0;brake.rotation.x=braking?-.45:0;const shifts:Record<number,[number,number]>={[-1]:[.25,.32],1:[-.22,-.28],2:[-.22,.28],3:[0,-.28],4:[0,.28],5:[.22,-.28]};const [gx,gz]=shifts[gearNumber];gear.rotation.z=-gx;gear.rotation.x=gz;
   wheelSpin+=speed*dt/.36;wheels.forEach((wheel,i)=>{wheel.rotation.y=i%2===0?steer*.4:0;wheel.children.forEach(child=>{child.rotation.set(0,0,Math.PI/2);child.rotateY(wheelSpin);});});
  }
- function snapshot(){return {position:group.position.toArray(),rotation:group.rotation.y,speed,driving}}
- function restore(state:any){if(!state||!Array.isArray(state.position)||state.position.length!==3||!state.position.every(Number.isFinite)||!Number.isFinite(state.rotation))return;group.position.fromArray(state.position);group.rotation.y=state.rotation;speed=Number.isFinite(state.speed)?THREE.MathUtils.clamp(state.speed,-3,12):0;driving=state.driving===true;group.updateMatrixWorld(true)}
+ function snapshot(){return {position:group.position.toArray(),rotation:group.rotation.y,speed,velocityX,velocityZ,driving}}
+ function restore(state:any){if(!state||!Array.isArray(state.position)||state.position.length!==3||!state.position.every(Number.isFinite)||!Number.isFinite(state.rotation))return;group.position.fromArray(state.position);group.rotation.y=state.rotation;speed=Number.isFinite(state.speed)?THREE.MathUtils.clamp(state.speed,-3,12):0;velocityX=Number.isFinite(state.velocityX)?state.velocityX:-Math.sin(state.rotation)*speed;velocityZ=Number.isFinite(state.velocityZ)?state.velocityZ:-Math.cos(state.rotation)*speed;driving=state.driving===true;group.updateMatrixWorld(true)}
  return {group,enter,exit,update,animate,snapshot,restore,get driving(){return driving},get gear(){return gearNumber<0?'R':String(gearNumber)},get speed(){return speed},get steering(){return steer}};
 }

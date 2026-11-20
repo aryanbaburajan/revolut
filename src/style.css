@@ -12,24 +12,120 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .ammo-display { position: absolute; right: 24px; bottom: 24px; z-index: 2; color: #fff; mix-blend-mode: difference; font: 700 28px/1.2 Geist, sans-serif; pointer-events: none; }
 .health-bar { position: absolute; left: 24px; bottom: 24px; z-index: 2; width: min(240px, 40vw); height: 28px; padding: 4px; border: 2px solid #111; background: #fff; pointer-events: none; }
 .health-bar-fill { height: 100%; background: repeating-linear-gradient(135deg, #b60000 0 3px, #ff7474 3px 6px); }
-.streak-display { position: absolute; top: 24px; left: 50%; z-index: 2; transform: translateX(-50%); color: #fff; mix-blend-mode: difference; font: 700 calc(48px * var(--streak-scale, 1))/1.05 Geist, sans-serif; text-shadow: calc(-1 * var(--streak-fringe, 0px)) 0 #f00, var(--streak-fringe, 0px) 0 #0ff; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .2s, font-size .2s, text-shadow .2s; }
+.hurt-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    repeating-linear-gradient(135deg, #d90000 0 3px, transparent 3px var(--hatch-spacing, 12px)),
+    repeating-linear-gradient(45deg, #d90000 0 3px, transparent 3px var(--hatch-spacing, 12px));
+  mask-image: radial-gradient(ellipse 85% 80% at center, transparent var(--hatch-center, 48%), #000 100%);
+}
+.streak-display { position: absolute; top: 24px; left: 50%; z-index: 2; transform: translateX(-50%); width: calc(100% - 48px); color: #fff; mix-blend-mode: difference; font: 700 min(calc(48px * var(--streak-scale, 1)), 20vw)/1.05 Geist, sans-serif; text-align: center; overflow-wrap: anywhere; text-shadow: calc(-1 * var(--streak-fringe, 0px)) 0 #f00, var(--streak-fringe, 0px) 0 #0ff; pointer-events: none; opacity: 0; transition: opacity .2s, font-size .2s, text-shadow .2s; }
 .streak-display.visible { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .streak-display.visible.shaking { animation: streak-shake 180ms steps(1, end) infinite; }
+}
+@keyframes streak-shake {
+  0%, 100% { translate: 0 0; }
+  20% { translate: var(--streak-shake) calc(var(--streak-shake) * -.4); }
+  40% { translate: calc(var(--streak-shake) * -.65) calc(var(--streak-shake) * .6); }
+  60% { translate: calc(var(--streak-shake) * .45) calc(var(--streak-shake) * .25); }
+  80% { translate: calc(-1 * var(--streak-shake)) calc(var(--streak-shake) * -.55); }
+}
+
 .weapon-wheel { position: absolute; z-index: 5; top: 50%; left: 50%; width: min(320px, 65vw); aspect-ratio: 1; transform: translate(-50%, -50%) scale(.95); display: flex; border: 2px solid #fff; border-radius: 50%; overflow: hidden; mix-blend-mode: difference; opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; }
 .weapon-wheel.visible { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 #app:has(.weapon-wheel.visible) .crosshair { visibility: hidden; }
 .weapon-wheel-sector { position: absolute; inset: 0; color: #fff; font: 700 10px system-ui, sans-serif; letter-spacing: .04em; }
-.weapon-wheel-sector:nth-child(1) { clip-path: polygon(50% 50%, 50% 0, 100% 0, 100% 78.87%); }
-.weapon-wheel-sector:nth-child(2) { clip-path: polygon(50% 50%, 100% 78.87%, 100% 100%, 0 100%, 0 78.87%); }
-.weapon-wheel-sector:nth-child(3) { clip-path: polygon(50% 50%, 0 78.87%, 0 0, 50% 0); }
-.weapon-wheel-sector.selected { background: repeating-linear-gradient(135deg, #fff 0 2px, transparent 2px 8px); }
+.weapon-wheel-sector:nth-child(1) { clip-path: polygon(50% 50%, 50% 0, 100% 0, 100% 50%); }
+.weapon-wheel-sector:nth-child(2) { clip-path: polygon(50% 50%, 100% 50%, 100% 100%, 50% 100%); }
+.weapon-wheel-sector:nth-child(3) { clip-path: polygon(50% 50%, 50% 100%, 0 100%, 0 50%); }
+.weapon-wheel-sector:nth-child(4) { clip-path: polygon(50% 50%, 0 50%, 0 0, 50% 0); }
+.weapon-wheel-sector.selected::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(135deg, #fff 0 2px, transparent 2px 8px); mask-image: radial-gradient(circle 38px at center, transparent 100%, #000 100%); }
 .weapon-wheel-sector span { position: absolute; background: #000; padding: 4px; transform: translate(-50%, -50%); }
-.weapon-wheel-sector:nth-child(1) span { left: 74%; top: 36%; }
-.weapon-wheel-sector:nth-child(2) span { left: 50%; top: 79%; }
-.weapon-wheel-sector:nth-child(3) span { left: 26%; top: 36%; }
-.weapon-wheel-lines { position: absolute; inset: 0; width: 100%; height: 100%; fill: none; stroke: white; stroke-width: .65; }
+.weapon-wheel-sector:nth-child(1) span { left: 75%; top: 25%; }
+.weapon-wheel-sector:nth-child(2) span { left: 75%; top: 75%; }
+.weapon-wheel-sector:nth-child(3) span { left: 25%; top: 75%; }
+.weapon-wheel-sector:nth-child(4) span { left: 25%; top: 25%; }
+.weapon-wheel-lines { position: absolute; inset: 0; width: 100%; height: 100%; fill: none; stroke: white; stroke-width: .65; mask-image: radial-gradient(circle 38px at center, transparent 100%, #000 100%); }
 .weapon-wheel-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 76px; height: 76px; border: 2px solid #fff; border-radius: 50%; background: transparent; color: #fff; font: 700 9px system-ui, sans-serif; }
 
 .sky-fade { position: absolute; inset: 0; z-index: 20; background: #000; opacity: 0; pointer-events: none; transition: opacity 120ms linear; }
 .sky-fade.visible { opacity: 1; }
 .opening-title { position: absolute; z-index: 19; inset: 0; display: grid; place-items: center; color: #fff; -webkit-text-stroke: 2px #000; paint-order: stroke fill; font: 900 clamp(48px, 12vw, 160px)/1 Geist, sans-serif; letter-spacing: .08em; pointer-events: none; opacity: 1; transition: opacity .8s ease; }
 .opening-title.hidden { display: none; }
+
+ .city-menu {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template: auto minmax(0, 1fr) / minmax(0, 1fr) minmax(240px, 28%);
+  gap: 18px 32px;
+  padding: clamp(18px, 3.5vw, 48px);
+  background: #fff;
+  color: #111;
+  font-family: Geist, sans-serif;
+}
+.city-menu-header { grid-column: 1 / -1; display: flex; align-items: end; justify-content: space-between; gap: 16px; border-bottom: 3px solid #111; padding-bottom: 12px; }
+.city-menu-header h1 { margin: 0; color: #111; font-size: clamp(42px, 8vw, 100px); line-height: .85; letter-spacing: .04em; }
+.city-menu-header p { margin: 0; padding-bottom: 3px; text-transform: uppercase; font-size: clamp(12px, 1.4vw, 17px); text-align: right; }
+.city-globe {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 2px solid #111;
+  background: #fff;
+}
+.city-globe canvas { position: absolute; inset: 0; cursor: grab; }
+.city-globe canvas:active { cursor: grabbing; }
+.city-globe canvas:focus-visible { outline: 3px solid #111; outline-offset: -6px; }
+.city-pin {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #111;
+  border-radius: 50%;
+  background: #fff;
+}
+.city-pin::after { content: ''; position: absolute; inset: 4px; border-radius: 50%; background: #111; }
+.city-pin:hover, .city-pin:focus-visible { z-index: 1; outline: 2px solid #111; outline-offset: 3px; background: #111; }
+.city-pin:hover::after, .city-pin:focus-visible::after { background: #fff; }
+.city-pin-label {
+  position: absolute;
+  left: 20px;
+  bottom: 10px;
+  display: none;
+  padding: 5px 8px;
+  background: #111;
+  color: #fff;
+  font: 700 12px/1.2 Geist, sans-serif;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.city-pin:hover .city-pin-label, .city-pin:focus-visible .city-pin-label { display: block; }
+.city-pin.label-left .city-pin-label { left: auto; right: 20px; }
+.city-pin.label-below .city-pin-label { bottom: auto; top: 10px; }
+.city-list { min-height: 0; overflow: auto; border-top: 2px solid #111; }
+.city-list a {
+  display: grid;
+  gap: 4px;
+  padding: 12px 10px;
+  border-bottom: 1px solid #111;
+  color: inherit;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.city-list a:hover, .city-list a:focus-visible { background: #111; color: #fff; outline: none; }
+.city-list a strong { font-size: clamp(15px, 1.5vw, 20px); }
+.city-list a span { font-size: 11px; }
+@media (max-width: 660px) {
+  .city-menu { grid-template: auto minmax(135px, 1.4fr) minmax(75px, 1fr) / minmax(0, 1fr); gap: 10px; }
+  .city-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
+  .city-list a { padding: 9px 8px; }
+}

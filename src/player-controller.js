@@ -1,7 +1,7 @@
 import { walk, radius, stance } from './locomotion.ts';
 
-export function createPlayerController(R, world, camera, groundHeight = 0, boundary = 499) {
-  const body = world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, groundHeight + .7, 5));
+export function createPlayerController(R, world, camera, groundHeight = 0, boundary = 499, spawn = { x: 0, z: 5 }) {
+  const body = world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(spawn.x, groundHeight + .7, spawn.z));
   const collider = world.createCollider(R.ColliderDesc.capsule(stance(false) - radius, radius), body);
   const controller = world.createCharacterController(.02);
   controller.enableSnapToGround(.1);

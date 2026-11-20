@@ -1,0 +1,72 @@
+[
+  {
+    "id": "thrissur-round",
+    "name": "Swaraj Round",
+    "region": "Thrissur, India",
+    "lat": 10.5249,
+    "lon": 76.2144
+  },
+  {
+    "id": "shibuya",
+    "name": "Shibuya",
+    "region": "Tokyo, Japan",
+    "lat": 35.6595,
+    "lon": 139.7005
+  },
+  {
+    "id": "mumbai",
+    "name": "Mumbai",
+    "region": "India",
+    "lat": 18.9306,
+    "lon": 72.83165
+  },
+  {
+    "id": "delhi",
+    "name": "New Delhi",
+    "region": "India",
+    "lat": 28.6316,
+    "lon": 77.219
+  },
+  {
+    "id": "myeongdong",
+    "name": "Myeongdong",
+    "region": "Seoul, South Korea",
+    "lat": 37.5636,
+    "lon": 126.9852
+  },
+  {
+    "id": "khao-san",
+    "name": "Khao San Road",
+    "region": "Bangkok, Thailand",
+    "lat": 13.7589,
+    "lon": 100.497
+  },
+  {
+    "id": "kalverstraat",
+    "name": "Kalverstraat",
+    "region": "Amsterdam, Netherlands",
+    "lat": 52.3699,
+    "lon": 4.8913
+  },
+  {
+    "id": "london",
+    "name": "London",
+    "region": "United Kingdom",
+    "lat": 51.5109,
+    "lon": -0.1279
+  },
+  {
+    "id": "new-york",
+    "name": "New York",
+    "region": "United States",
+    "lat": 40.758,
+    "lon": -73.98535
+  },
+  {
+    "id": "avenida-paulista",
+    "name": "Avenida Paulista",
+    "region": "São Paulo, Brazil",
+    "lat": -23.5614,
+    "lon": -46.6559
+  }
+]

@@ -24,7 +24,7 @@ export function planEncounters(layout, _landmarks, canSpawn) {
     const offset = (random()-.5)*segment.width*.8;
     const x = segment.a.x+(segment.b.x-segment.a.x)*t-dz*offset;
     const z = segment.a.z+(segment.b.z-segment.a.z)*t+dx*offset;
-    if (Math.abs(x)>495 || Math.abs(z)>495 || Math.hypot(x,z-5)<5 || !canSpawn({x,z})) continue;
+    if (Math.abs(x)>495 || Math.abs(z)>495 || !canSpawn({x,z})) continue;
     const group = {x,z,awake:false};
     const densityRank = ((Math.imul(spawns.length + 1, 2654435761) >>> 0) / 4294967296);
     spawns.push({x,z,group,densityRank,patrol:[segment.a,segment.b],leg:random()<.5?0:1,health:50});

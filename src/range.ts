@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {planEncounters} from './encounters.js';
 import { stance, radius } from './locomotion.ts';
 import { roadWidths } from './city.js';
-export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], layout:any, landmarks:any, onKill:(now:number)=>void = () => {}, onPlayerHit:(amount:number)=>void = () => {}){
+export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], layout:any, landmarks:any, onKill:(now:number)=>void = () => {}, onPlayerHit:(amount:number)=>void = () => {}, spawn = { x: 0, z: 5 }){
  const load=(name:string)=>{const t=new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/${name}`);t.colorSpace=THREE.SRGBColorSpace;return t};
  const targets = new THREE.Group();
  scene.add(targets);
@@ -69,7 +69,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
  const zombies: any[] = [];
  const fallen: any[] = [];
  const spawns = planEncounters(layout, landmarks, (p:{x:number;z:number}) =>
-   layout.vacant(p,.32) && !world.intersectionWithShape({x:p.x,y:zombieHalfHeight+.02,z:p.z},identity,shape));
+   Math.hypot(p.x - spawn.x, p.z - spawn.z) >= 5 && layout.vacant(p,.32) && !world.intersectionWithShape({x:p.x,y:zombieHalfHeight+.02,z:p.z},identity,shape));
  const bodyGeometry = new THREE.PlaneGeometry(1.15, 1.16);
  const armGeometry = new THREE.PlaneGeometry(.55, 1.08).translate(0, -.54, 0);
  const legGeometry = new THREE.PlaneGeometry(.43, .95).translate(0, -.475, 0);
@@ -173,7 +173,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
      activate(spawn,i);
    }
  }
- stream(new THREE.Vector3(0,0,5),0,'walking');
+ stream(new THREE.Vector3(spawn.x,0,spawn.z),0,'walking');
  renderInstances();
  let seed=9281;const random=()=>{seed=seed*16807%2147483647;return(seed-1)/2147483646};const dummy=new THREE.Object3D();
  const roadGrid = new Map<string, {ax:number,az:number,bx:number,bz:number,width:number}[]>();
@@ -353,6 +353,26 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
      if (Math.hypot(p.x-point.x,p.y-point.y,p.z-point.z)<=blastRadius) { damage(zombies[i],now,zombies[i].health,false); changed=true; }
    }
    if(changed) renderInstances();
+   return changed;
+ }
+ function fireShotgun(origin:THREE.Vector3, direction:THREE.Vector3, now:number, visible:(point:THREE.Vector3)=>boolean) {
+   const point = new THREE.Vector3(), offset = new THREE.Vector3();
+   let nearestHit: THREE.Vector3 | undefined;
+   let nearestDistance = Infinity;
+   for (let i = zombies.length - 1; i >= 0; i--) {
+     const zombie = zombies[i], position = zombie.body.translation();
+     point.set(position.x, position.y, position.z);
+     offset.subVectors(point, origin);
+     const distance = offset.length();
+     if (distance > 15 || distance === 0 || offset.dot(direction) / distance < Math.cos(12 * Math.PI / 180) || !visible(point)) continue;
+     damage(zombie, now, zombie.health, false);
+     if (distance < nearestDistance) {
+       nearestDistance = distance;
+       nearestHit = point.clone();
+     }
+   }
+   if (nearestHit) renderInstances();
+   return nearestHit;
  }
  function fireTurret(origin:THREE.Vector3, direction:THREE.Vector3, now:number, visible:(point:THREE.Vector3)=>boolean) {
    const point=new THREE.Vector3(), offset=new THREE.Vector3();
@@ -373,5 +393,5 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
    if (nearestHit) renderInstances();
    return nearestHit;
  }
- return {targets,step,update,shoot,runOver,explode,fireTurret, get ambientTargets() { return {children:zombies.map(zombie => zombie.group)}; }};
+ return {targets,step,update,shoot,runOver,explode,fireShotgun,fireTurret, get ambientTargets() { return {children:zombies.map(zombie => zombie.group)}; }};
 }

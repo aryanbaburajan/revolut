@@ -109,8 +109,8 @@ export function createHelicopter(scene:THREE.Scene,world:any,R:any,playerCollide
  const attitude=new THREE.Quaternion(), turn=new THREE.Quaternion();
  const axisX=new THREE.Vector3(1,0,0), axisY=new THREE.Vector3(0,1,0), axisZ=new THREE.Vector3(0,0,1);
  function orient(level:number){group.quaternion.setFromAxisAngle(axisY,heading).slerp(attitude,level);}
- function isClear(p:{x:number;z:number}, _obstacles:Collider[], radius:number, y=.5) {
-  return !world.intersectionWithShape({x:p.x,y,z:p.z},{x:0,y:0,z:0,w:1},new R.Ball(radius),R.QueryFilterFlags.EXCLUDE_SENSORS,undefined,playerCollider);
+ function isClear(p:{x:number;z:number}, _obstacles:Collider[], radius:number, y=.5, buildingsOnly=false) {
+  return !world.intersectionWithShape({x:p.x,y,z:p.z},{x:0,y:0,z:0,w:1},new R.Ball(radius),R.QueryFilterFlags.EXCLUDE_SENSORS,undefined,playerCollider,undefined,buildingsOnly ? (collider:any)=>buildingColliderHandles.has(collider.handle) : undefined);
  }
  const own:Collider[]=[{kind:'box',minX:x-.85,maxX:x+.85,minZ:z-1.75,maxZ:z+1.75},{kind:'box',minX:x-1,maxX:x+1,minZ:z+1,maxZ:z+4}];colliders.push(...own);
  function syncCollision(){const sin=Math.sin(heading),cos=Math.cos(heading);for(let i=0;i<own.length;i++){const c=own[i];if(c.kind!=='box')continue;const hw=i===0?.85:1,hd=i===0?1.75:2.0;const ex=Math.abs(cos)*hw+Math.abs(sin)*hd,ez=Math.abs(sin)*hw+Math.abs(cos)*hd;c.minX=group.position.x-ex;c.maxX=group.position.x+ex;c.minZ=group.position.z-ez;c.maxZ=group.position.z+ez;}}
@@ -156,9 +156,13 @@ export function createHelicopter(scene:THREE.Scene,world:any,R:any,playerCollide
   attitude.multiply(turn.setFromAxisAngle(axisX,airPitch-previousPitch)).normalize();
   const airborne = THREE.MathUtils.smoothstep(group.position.y, 0, 2);
   liftDirection.set(0,1,0).applyQuaternion(attitude);
-  verticalSpeed += (thrust * 5 * liftDirection.y - verticalSpeed) * (1 - Math.exp(-.8 * dt));
-  velocityX+=liftDirection.x*7*airborne*dt;
-  velocityZ+=liftDirection.z*7*airborne*dt;
+  // At idle the rotor slows the fall, but only powered lift can hold altitude.
+  const rotorThrust = thrust > 0 ? 19 : thrust < 0 ? 2 : 6.5;
+  verticalSpeed += (rotorThrust * liftDirection.y - 9.81) * dt;
+  verticalSpeed *= Math.exp(-.18 * dt);
+  verticalSpeed = THREE.MathUtils.clamp(verticalSpeed, -16, 13);
+  velocityX+=liftDirection.x*rotorThrust*airborne*dt;
+  velocityZ+=liftDirection.z*rotorThrust*airborne*dt;
   const drag=Math.exp(-.18*dt);
   velocityX*=drag; velocityZ*=drag;
   const horizontalSpeed=Math.hypot(velocityX,velocityZ);
@@ -170,7 +174,7 @@ export function createHelicopter(scene:THREE.Scene,world:any,R:any,playerCollide
   const origin=new THREE.Vector3(nx,ny,nz);
   if(hitsBuilding(origin,attitude)){crash(origin);return;}
   const obstacles=colliders.filter(c=>!own.includes(c));
-  const clear=(x:number,y:number,z:number)=>isClear({x,z},obstacles,1.2,y+1.3);
+  const clear=(x:number,y:number,z:number)=>isClear({x,z},obstacles,1.2,y+1.3,true);
   if(clear(nx,ny,nz)) group.position.set(nx,ny,nz);
   else {
    // Preserve steering and movement along clear axes when a nearby prop blocks one direction.
@@ -195,5 +199,10 @@ export function createHelicopter(scene:THREE.Scene,world:any,R:any,playerCollide
   for(const collider of own)if(!colliders.includes(collider))colliders.push(collider);
   scene.add(group);syncCollision();group.updateMatrixWorld(true);
  }
- return {group,animate(dt:number,active:boolean,local:boolean){if(canopy)canopy.visible=!local;if(active){rotor.rotation.y-=dt*12;tailRotor.rotation.x-=dt*18;}},enter,exit,update,mouse,snapshot,restore,respawn,get flying(){return flying},get speed(){return speed}};
+ function reposition(position:THREE.Vector3) {
+  if (destroyed) { respawn(position); return; }
+  restore({position:position.toArray(), heading:0, speed:0, sideSpeed:0, velocityX:0, velocityZ:0, verticalSpeed:0, flying:false});
+ }
+ syncCollision();
+ return {group,reposition,animate(dt:number,active:boolean,local:boolean){if(canopy)canopy.visible=!local;if(active){rotor.rotation.y-=dt*12;tailRotor.rotation.x-=dt*18;}},enter,exit,update,mouse,snapshot,restore,respawn,get flying(){return flying},get speed(){return speed}};
 }

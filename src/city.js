@@ -5,9 +5,9 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export const roadWidths = { motorway: 12, trunk: 10, primary: 8, secondary: 7, tertiary: 6, residential: 4, service: 3, track: 2, path: 1.2, footway: 1.2 };
 
-export async function createCity(scene, world, RAPIER) {
-  const response = await fetch(`${import.meta.env.BASE_URL}data/shibuya.json`);
-  if (!response.ok) throw new Error('Could not load the cached Shibuya map');
+export async function createCity(scene, world, RAPIER, cityId) {
+  const response = await fetch(`${import.meta.env.BASE_URL}data/${cityId}.json`);
+  if (!response.ok) throw new Error(`Could not load the map for ${cityId}`);
   const { value: data } = await response.json();
   const layout = streetLayout(data);
   const buildingMaterial = facadeMaterial();

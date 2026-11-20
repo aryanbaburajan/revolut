@@ -11,11 +11,20 @@ import { createGameAudio } from './audio.ts';
 import { createGunController } from './gun-controller.js';
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import '@fontsource/geist/700.css';
-import './style.css';
 
 
-async function main() {
+export async function startGame(cityId) {
+  const menuUrl = new URL(location.href);
+  menuUrl.searchParams.delete('city');
+  let leaving = false;
+  function returnToMenu() {
+    if (leaving) return;
+    leaving = true;
+    location.assign(menuUrl);
+  }
+  window.addEventListener('keydown', event => {
+    if (event.code === 'KeyP' && !event.repeat) returnToMenu();
+  });
 await RAPIER.init();
 
 const scene = new THREE.Scene();
@@ -37,39 +46,76 @@ ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 world.createCollider(new RAPIER.ColliderDesc(new RAPIER.HalfSpace({ x: 0, y: 1, z: 0 })));
 
-const city = await createCity(scene, world, RAPIER);
+const city = await createCity(scene, world, RAPIER, cityId);
 
-const player = createPlayerController(RAPIER, world, camera);
+// Some maps center on a building. Find a clear landing site before placing vehicles.
+let spawn = { x: 0, z: 5 };
+if (!city.layout.vacant(spawn, 3)) {
+  const nearbyRoads = city.layout.segments.map(({ a, b }) => ({
+    x: (a.x + b.x) / 2,
+    z: (a.z + b.z) / 2,
+  })).filter(({ x, z }) => Math.abs(x) < 480 && Math.abs(z) < 480);
+  nearbyRoads.sort((a, b) => Math.hypot(a.x, a.z - 5) - Math.hypot(b.x, b.z - 5));
+  spawn = nearbyRoads.find(point => city.layout.vacant(point, 3)) ?? spawn;
+}
+const player = createPlayerController(RAPIER, world, camera, 0, 499, spawn);
 world.step();
-const jeep = createJeep(scene, world, RAPIER, player.collider);
-const vehicleColliders = [];
-const tank = createTank(scene, world, RAPIER, player.collider, vehicleColliders);
-const helicopter = createHelicopter(scene, world, RAPIER, player.collider, vehicleColliders, 0, -12, city.buildingColliderHandles, helicopterCrash);
-function placeVehicle(vehicle, clearance, startRadius) {
-  const shape = new RAPIER.Ball(clearance);
-  for (let radius = startRadius; radius < 120; radius += 2) {
-    for (let i = 0; i < 32; i++) {
-      const angle = i * Math.PI / 16, x = Math.sin(angle) * radius, z = 5 + Math.cos(angle) * radius;
-      if (Math.hypot(x-jeep.group.position.x,z-jeep.group.position.z) < clearance+4) continue;
-      if (vehicle !== tank && Math.hypot(x-tank.group.position.x,z-tank.group.position.z) < clearance+4) continue;
-      if (vehicle === helicopter) {
-        const parts = [{center:[0,1.35,-.2],half:[.85,.7,1.6]}, {center:[0,1.6,2.7],half:[.36,.5,1.7]}, {center:[0,2.45,0],half:[3.4,.08,3.4]}];
-        const blocked = parts.some(({center,half}) => world.intersectionWithShape(
-          {x:x+center[0],y:center[1],z:z+center[2]}, {x:0,y:0,z:0,w:1},
-          new RAPIER.Cuboid(...half), RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-          undefined, player.collider, undefined, collider => city.buildingColliderHandles.has(collider.handle)
-        ));
-        if (blocked) continue;
+// Search outwards from the landing site. The circles enclose each vehicle,
+// including the helicopter rotor and tail, so neither buildings nor vehicles overlap.
+const vehicleSites = [];
+function findVehicleSite(radius, origin = spawn) {
+  function search(maxDistance, spacing) {
+    const step = 2;
+    const extent = Math.ceil(maxDistance / step);
+    let nearest;
+    let nearestDistance = Infinity;
+    for (let ring = 0; ring <= extent; ring++) {
+      if (ring * step > nearestDistance) break;
+      const candidates = [];
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dz = -ring; dz <= ring; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+          candidates.push({ x: origin.x + dx * step, z: origin.z + dz * step });
+        }
       }
-      if (!world.intersectionWithShape({x,y:clearance+.1,z},{x:0,y:0,z:0,w:1},shape,RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,undefined,player.collider)) {
-        vehicle.group.position.set(x,0,z); vehicle.group.updateMatrixWorld(true); return;
+      candidates.sort((a, b) => Math.hypot(a.x - origin.x, a.z - origin.z) - Math.hypot(b.x - origin.x, b.z - origin.z));
+      for (const point of candidates) {
+        if (Math.hypot(point.x - origin.x, point.z - origin.z) > maxDistance) continue;
+        if (Math.abs(point.x) + radius > 499 || Math.abs(point.z) + radius > 499) continue;
+        if (Math.hypot(point.x - origin.x, point.z - origin.z) < radius + 2) continue;
+        if (vehicleSites.some(site => Math.hypot(point.x - site.x, point.z - site.z) < radius + site.radius + spacing)) continue;
+        const distance = Math.hypot(point.x - origin.x, point.z - origin.z);
+        if (distance < nearestDistance && city.layout.vacant(point, radius)) {
+          nearest = point;
+          nearestDistance = distance;
+        }
       }
     }
+    return nearest;
   }
+  const point = search(50, 4) ?? search(1415, 0);
+  if (!point) throw new Error('Could not find a clear location for every vehicle');
+  vehicleSites.push({ ...point, radius });
+  return point;
 }
-placeVehicle(tank, 2.4, 8);
-placeVehicle(helicopter, 3.4, 14);
+const jeepSite = findVehicleSite(1.9);
+const tankSite = findVehicleSite(3.5);
+const helicopterSite = findVehicleSite(5);
+const jeep = createJeep(scene, world, RAPIER, player.collider, jeepSite, city.buildingColliderHandles);
+const vehicleColliders = [];
+const tank = createTank(scene, world, RAPIER, player.collider, vehicleColliders, tankSite, city.buildingColliderHandles);
+const helicopter = createHelicopter(scene, world, RAPIER, player.collider, vehicleColliders, helicopterSite.x, helicopterSite.z, city.buildingColliderHandles, helicopterCrash);
 const helicopterSpawn = helicopter.group.position.clone();
+function placeVehiclesAtLanding(landing) {
+  vehicleSites.length = 0;
+  const jeepSite = findVehicleSite(1.9, landing);
+  const tankSite = findVehicleSite(3.5, landing);
+  const helicopterSite = findVehicleSite(5, landing);
+  jeep.restore({ position: [jeepSite.x, 0, jeepSite.z], rotation: -Math.PI / 2, speed: 0, driving: false });
+  tank.reposition(tankSite);
+  helicopterSpawn.set(helicopterSite.x, 0, helicopterSite.z);
+  helicopter.reposition(helicopterSpawn);
+}
 const isDriving = () => jeep.driving || tank.driving || helicopter.flying;
 const streets = dressStreets(scene, world, RAPIER, city, jeep, [tank.group.position, helicopter.group.position]);
 let playerHealth = 100;
@@ -81,9 +127,27 @@ healthBar.setAttribute('aria-valuemin', '0');
 healthBar.setAttribute('aria-valuemax', '100');
 healthBar.innerHTML = '<div class="health-bar-fill"></div>';
 document.querySelector('#app').appendChild(healthBar);
+const hurtOverlay = document.createElement('div');
+hurtOverlay.className = 'hurt-overlay';
+hurtOverlay.setAttribute('aria-hidden', 'true');
+document.querySelector('#app').appendChild(hurtOverlay);
+let hurtAnimation;
+function showDamage() {
+  hurtAnimation?.cancel();
+  const persistent = playerHealth <= 40 && playerHealth > 0 ? .65 + (40 - playerHealth) / 40 * .25 : 0;
+  hurtAnimation = hurtOverlay.animate(
+    [{ opacity: 1 }, { opacity: .9, offset: .25 }, { opacity: persistent }],
+    { duration: 650, easing: 'ease-out' },
+  );
+}
 function updateHealth() {
   healthBar.firstElementChild.style.width = `${playerHealth}%`;
   healthBar.setAttribute('aria-valuenow', String(playerHealth));
+  const damage = 1 - playerHealth / 100;
+  hurtOverlay.style.setProperty('--hatch-spacing', `${12 - 7 * damage}px`);
+  hurtOverlay.style.setProperty('--hatch-center', `${36 - 32 * damage}%`);
+  hurtOverlay.style.opacity = playerHealth <= 40 && playerHealth > 0 ? String(.65 + (40 - playerHealth) / 40 * .25) : '0';
+  if (playerHealth === 100) hurtAnimation?.cancel();
 }
 updateHealth();
 const streakDisplay = document.createElement('div');
@@ -91,26 +155,32 @@ streakDisplay.className = 'streak-display';
 streakDisplay.setAttribute('aria-live', 'polite');
 document.querySelector('#app').appendChild(streakDisplay);
 const streakWindow = 5000;
+const maxVisualStreak = 500;
 let streak = 0, lastKill = -Infinity;
 const earlyStreakMilestones = new Set([5, 10, 25, 50]);
 let pendingStreakCue = 0;
 const range = createRange(scene, world, RAPIER, city.roads, city.layout, streets, now => {
+  const previousStreak = streak;
   streak = now - lastKill < streakWindow ? streak + 1 : 1;
   lastKill = now;
-  if (earlyStreakMilestones.has(streak) || streak % 100 === 0) {
+  if (streak !== previousStreak && (earlyStreakMilestones.has(streak) || streak % 100 === 0)) {
     pendingStreakCue = Math.max(pendingStreakCue, streak);
   }
   streakDisplay.textContent = `${streak} KILL STREAK`;
-  const streakGrowth = Math.expm1(2.3 * Math.min(1, (streak - 1) / 499)) / Math.expm1(2.3);
+  const streakGrowth = Math.expm1(2.3 * (Math.min(streak, maxVisualStreak) - 1) / (maxVisualStreak - 1)) / Math.expm1(2.3);
   streakDisplay.style.setProperty('--streak-scale', String(1 + 9 * streakGrowth));
   streakDisplay.style.setProperty('--streak-fringe', `${8 + 48 * streakGrowth}px`);
+  const shakeProgress = Math.min(1, Math.max(0, (streak - 49) / 150));
+  streakDisplay.style.setProperty('--streak-shake', `${2 + 12 * shakeProgress ** 2}px`);
+  streakDisplay.classList.toggle('shaking', streak >= 50);
   streakDisplay.classList.add('visible');
 }, amount => {
   if (skyTransition || playerHealth <= 0) return;
   playerHealth = Math.max(0, playerHealth - amount);
+  showDamage();
   updateHealth();
   if (playerHealth === 0) respawnInSky();
-});
+}, spawn);
 
 const keys = new Set();
 let jumpQueued = false;
@@ -184,7 +254,7 @@ window.addEventListener('keydown', (event) => {
     }
   }
   if (event.code === 'Space' && !event.repeat && !isDriving()) jumpQueued = true;
-  if (event.code === 'KeyR' && !event.repeat && !skyTransition && !isDriving()) respawnInSky();
+  if (event.code === 'KeyQ' && !event.repeat && !skyTransition && !isDriving()) respawnInSky();
   keys.add(event.code);
 });
 window.addEventListener('keyup', (event) => keys.delete(event.code));
@@ -218,7 +288,27 @@ player.updateCamera();
 const guns = createGunController({ scene, camera, renderer, ground, targets: range.targets, buildings: city.buildingMeshes, isDriving, audio, onHit: (hit, direction, damage) => {
   impacts.add(hit, direction);
   return range.shoot({ ray: { direction } }, performance.now(), hit, damage);
-} });
+}, onShotgunHit: (origin, direction, now) => {
+  const obstruction = new THREE.Raycaster();
+  const hit = range.fireShotgun(origin, direction, now, point => {
+    const delta = point.clone().sub(origin);
+    const distance = delta.length();
+    obstruction.set(origin, delta.normalize());
+    obstruction.far = distance;
+    return obstruction.intersectObjects([ground, ...city.buildingMeshes], false).length === 0;
+  });
+  if (hit) {
+    audio.impact('meat', hit, now);
+  } else {
+    obstruction.set(origin, direction);
+    obstruction.far = 15;
+    const surface = obstruction.intersectObjects([ground, ...city.buildingMeshes], false)[0];
+    if (surface) {
+      impacts.add(surface, direction);
+      audio.impact('concrete', surface.point, now);
+    }
+  }
+}, onRocketFire: launchRocket });
 
 let vehicleFiring = false, turretFiring = false;
 let lastVehicleShot = -Infinity, lastTurretShot = -Infinity;
@@ -233,13 +323,53 @@ function reloadMissiles(now) {
   audio.play('reload');
 }
 window.addEventListener('keydown', event => {
-  if (event.code === 'KeyT' && !event.repeat && helicopter.flying && document.pointerLockElement === renderer.domElement) reloadMissiles(performance.now());
+  if (event.code === 'KeyR' && !event.repeat && helicopter.flying && document.pointerLockElement === renderer.domElement) reloadMissiles(performance.now());
 });
 const vehicleRay = new THREE.Raycaster();
 const explosionGeometry = new THREE.BoxGeometry(1, 1, 1);
 const explosionEdges = new THREE.EdgesGeometry(explosionGeometry);
 const explosions = [];
 const turretTracers = [];
+const rockets = [];
+const rocketGeometry = new THREE.CylinderGeometry(.055, .09, .45, 8);
+rocketGeometry.rotateX(Math.PI / 2);
+const rocketMaterial = new THREE.MeshBasicMaterial({ color: 0x222222 });
+const rocketRay = new THREE.Raycaster();
+function launchRocket(now) {
+  const direction = camera.getWorldDirection(new THREE.Vector3());
+  const origin = camera.position.clone().addScaledVector(direction, .3);
+  launchProjectile(origin, direction, now, 48, 5);
+}
+function launchProjectile(origin, direction, now, speed, blastRadius) {
+  const mesh = new THREE.Mesh(rocketGeometry, rocketMaterial);
+  mesh.position.copy(origin);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+  mesh.userData.impact = true;
+  scene.add(mesh);
+  rockets.push({ mesh, direction, started: now, speed, blastRadius });
+}
+function updateRockets(dt, now) {
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const rocket = rockets[i];
+    const distance = rocket.speed * dt;
+    rocketRay.set(rocket.mesh.position, rocket.direction);
+    rocketRay.far = distance;
+    const hit = rocketRay.intersectObjects([ground, ...city.buildingMeshes, range.targets], true)
+      .find(item => item.object instanceof THREE.Mesh && !item.object.userData.impact);
+    if (hit) {
+      impacts.add(hit, rocket.direction);
+      addExplosion(hit.point, now);
+      audio.play('explosion', hit.point);
+      range.explode(hit.point, now, rocket.blastRadius);
+    } else {
+      rocket.mesh.position.addScaledVector(rocket.direction, distance);
+    }
+    if (hit || now - rocket.started >= 5000) {
+      scene.remove(rocket.mesh);
+      rockets.splice(i, 1);
+    }
+  }
+}
 function addExplosion(position, now) {
   const group = new THREE.Group();
   const fill = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, depthWrite:false});
@@ -315,12 +445,17 @@ function fireVehicle(now) {
       missileDisplay.textContent = `${missiles} / 6${missileReloadEnd ? ' · Reloading' : ''}`;
     } else if (tank.driving) {
       tank.recoil();
-      audio.play('cannon');
     }
+    audio.play('cannon');
     vehicleRay.setFromCamera(new THREE.Vector2(), camera);
     const hits = vehicleRay.intersectObjects([ground, ...city.buildingMeshes, range.targets], true);
     const hit = hits.find(item => item.object instanceof THREE.Mesh && !item.object.userData.impact);
-    if (hit) {
+    if (tank.driving) {
+      const muzzle = tank.barrel.localToWorld(new THREE.Vector3(0, 0, -2.55));
+      const target = hit ? hit.point : vehicleRay.ray.at(1000, new THREE.Vector3());
+      const direction = target.clone().sub(muzzle).normalize();
+      launchProjectile(muzzle, direction, now, 90, 4);
+    } else if (hit) {
       impacts.add(hit, vehicleRay.ray.direction);
       addExplosion(hit.point, now);
       audio.play('explosion', hit.point);
@@ -329,6 +464,7 @@ function fireVehicle(now) {
   }
   if (turretShot) {
     lastTurretShot = now;
+    audio.play('rifle');
     const origin=camera.getWorldPosition(new THREE.Vector3());
     const direction=camera.getWorldDirection(new THREE.Vector3());
     const obstructionRay=new THREE.Raycaster();
@@ -420,6 +556,7 @@ renderer.setAnimationLoop(() => {
           openingTitle.classList.add('hidden');
         }
         const landing = player.getFeetPosition(new THREE.Vector3());
+        placeVehiclesAtLanding(landing);
         addExplosion(landing, now);
         audio.play('openingLand');
         range.explode(landing, now, 8);
@@ -455,6 +592,7 @@ renderer.setAnimationLoop(() => {
     accumulator -= step;
   }
   fireVehicle(now);
+  updateRockets(frameTime, now);
   guns.update(frameTime, now, player.getMovementVelocity(movementVelocity));
   if (pendingStreakCue) {
     audio.streak(pendingStreakCue, now);
@@ -487,5 +625,3 @@ window.addEventListener('resize', () => {
 });
 
 }
-
-main().catch(console.error);
