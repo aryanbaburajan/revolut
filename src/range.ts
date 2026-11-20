@@ -6,8 +6,8 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
  const load=(name:string)=>{const t=new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/${name}`);t.colorSpace=THREE.SRGBColorSpace;return t};
  const targets = new THREE.Group();
  scene.add(targets);
- const bodyMaterial = new THREE.MeshBasicMaterial({map:load('zombie-torso.png'), alphaTest:.3, side:THREE.DoubleSide});
- const alternateBodyMaterial = new THREE.MeshBasicMaterial({map:load('zombie-torso-2.png'), alphaTest:.3, side:THREE.DoubleSide});
+ const bodyMaterials = ['zombie-torso.png', 'zombie-torso-2.png', 'zombie-torso-3.png'].map(name =>
+   new THREE.MeshBasicMaterial({map:load(name), alphaTest:.3, side:THREE.DoubleSide}));
  const armMaterial = new THREE.MeshBasicMaterial({map:load('zombie-arm.png'), alphaTest:.3, side:THREE.DoubleSide});
  const legMaterial = new THREE.MeshBasicMaterial({map:load('zombie-leg.png'), alphaTest:.3, side:THREE.DoubleSide});
  const colors = ['#ff1744', '#ff8500', '#fff000', '#25ed45', '#00d9ff', '#3b48ff', '#ed20ff'];
@@ -88,8 +88,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
  const activeLimit = 1200;
  const capacity = activeLimit + spawns.length;
  const batches = [
-   new THREE.InstancedMesh(bodyGeometry, bodyMaterial, capacity),
-   new THREE.InstancedMesh(bodyGeometry, alternateBodyMaterial, capacity),
+   ...bodyMaterials.map(material => new THREE.InstancedMesh(bodyGeometry, material, capacity)),
    new THREE.InstancedMesh(armGeometry, armMaterial, capacity),
    new THREE.InstancedMesh(armGeometry, armMaterial, capacity),
    new THREE.InstancedMesh(legGeometry, legMaterial, capacity),
@@ -103,7 +102,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
    mesh.raycast = (raycaster, intersections) => {
      const hits: THREE.Intersection[] = [];
      raycast(raycaster, hits);
-     intersections.push(...hits.filter(hit => hit.instanceId !== undefined && hit.instanceId < zombies.length && (batchIndex >= 2 || zombies[hit.instanceId].torsoVariant === batchIndex)));
+     intersections.push(...hits.filter(hit => hit.instanceId !== undefined && hit.instanceId < zombies.length && (batchIndex >= bodyMaterials.length || zombies[hit.instanceId].torsoVariant === batchIndex)));
    };
    targets.add(mesh);
  }
@@ -112,9 +111,9 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
    const all = [...zombies, ...fallen];
    all.forEach((zombie, index) => {
      zombie.group.updateMatrixWorld(true);
-     for (let variant = 0; variant < 2; variant++) batches[variant].setMatrixAt(index, zombie.torsoVariant === variant ? zombie.spriteBody.matrixWorld : hiddenBodyMatrix);
+     for (let variant = 0; variant < bodyMaterials.length; variant++) batches[variant].setMatrixAt(index, zombie.torsoVariant === variant ? zombie.spriteBody.matrixWorld : hiddenBodyMatrix);
      const parts = [...zombie.arms.map((arm:THREE.Group) => arm.children[0]), ...zombie.legs.map((leg:THREE.Group) => leg.children[0])];
-     parts.forEach((part:THREE.Object3D, batch:number) => batches[batch + 2].setMatrixAt(index, part.matrixWorld));
+     parts.forEach((part:THREE.Object3D, batch:number) => batches[batch + bodyMaterials.length].setMatrixAt(index, part.matrixWorld));
    });
    for (const mesh of batches) { mesh.count = all.length; mesh.boundingSphere = null; mesh.instanceMatrix.clearUpdateRanges(); mesh.instanceMatrix.addUpdateRange(0, all.length * 16); mesh.instanceMatrix.needsUpdate = true; }
  }
@@ -129,7 +128,7 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
  let lastMode = '';
  function activate(spawn:any, i:number) {
    const {x,z} = spawn;
-   if (spawn.torsoVariant === undefined) spawn.torsoVariant = Math.random() < .5 ? 0 : 1;
+   if (spawn.torsoVariant === undefined) spawn.torsoVariant = Math.floor(Math.random() * bodyMaterials.length);
    const group = new THREE.Group();
    group.scale.setScalar(visualScale);
    const body = new THREE.Object3D();
