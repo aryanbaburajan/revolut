@@ -12,6 +12,7 @@ const cues = {
   explosion: { files: single('explosion'), db: -9, priority: 4, loud: true },
   openingLand: { files: single('opening-land'), db: -9, priority: 4, loud: true },
   reload: { files: variants('reload', 3), db: -15, priority: 3, loud: false },
+  katana: { files: ['audio/sfx/katana.mp3'], db: -10, priority: 4, loud: false },
   coin: { files: single('coin'), db: -17, priority: 3, loud: false },
   land: { files: single('land'), db: -20, priority: 2, loud: false },
   concrete: { files: single('concrete'), db: -23, priority: 1, loud: false },

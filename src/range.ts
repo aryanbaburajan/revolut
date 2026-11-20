@@ -15,48 +15,59 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
    const canvas = document.createElement('canvas');
    canvas.width = canvas.height = 256;
    const ctx = canvas.getContext('2d')!;
-   // Overlapping irregular blobs and scattered drops make each variant distinct.
-   const offset = Math.floor(Math.random()*colors.length);
-   for (let i=0; i<colors.length; i++) {
-     const angle = i * Math.PI * 2 / colors.length + (Math.random()-.5)*.5;
-     const distance = 20 + Math.random()*35;
-     const cx = 128 + Math.cos(angle)*distance, cy = 128 + Math.sin(angle)*distance;
-     ctx.fillStyle = colors[(i+offset)%colors.length];
+   const offset = Math.floor(Math.random() * colors.length);
+   // Small irregular patches leave gaps between colors and around the center.
+   for (let i = 0; i < 90; i++) {
+     const angle = Math.random() * Math.PI * 2;
+     const distance = Math.pow(Math.random(), .7) * 106;
+     const cx = 128 + Math.cos(angle) * distance;
+     const cy = 128 + Math.sin(angle) * distance;
+     const size = (2 + Math.random() * 14) * (1 - distance / 170);
+     ctx.fillStyle = colors[(offset + Math.floor(Math.random() * colors.length)) % colors.length];
      ctx.beginPath();
-     for (let j=0; j<16; j++) {
-       const a = j*Math.PI/8, r = 20 + Math.random()*25;
-       const x = cx+Math.cos(a)*r, y = cy+Math.sin(a)*r;
-       if (j===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+     for (let j = 0; j < 9; j++) {
+       const a = j * Math.PI * 2 / 9;
+       const r = size * (.45 + Math.random() * .75);
+       const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * (.5 + Math.random() * .5);
+       if (!j) ctx.moveTo(x, y); else ctx.lineTo(x, y);
      }
-     ctx.closePath(); ctx.fill();
-     for (let j=0; j<4; j++) {
-       const a = angle + (Math.random()-.5)*.65, d = 65 + Math.random()*53;
-       ctx.beginPath();
-       ctx.ellipse(128 + Math.cos(a)*d, 128 + Math.sin(a)*d, 2+Math.random()*7, 2+Math.random()*5, a, 0, Math.PI*2);
-       ctx.fill();
-     }
+     ctx.closePath();
+     ctx.fill();
    }
    const texture = new THREE.CanvasTexture(canvas);
    texture.colorSpace = THREE.SRGBColorSpace;
-   const material = new THREE.MeshBasicMaterial({map:texture, transparent:true, alphaTest:.1, depthWrite:false, side:THREE.DoubleSide, polygonOffset:true, polygonOffsetFactor:-2});
-   const mesh = new THREE.InstancedMesh(splashGeometry, material, 64);
-   mesh.count = 0;
-   mesh.frustumCulled = false;
-   mesh.raycast = () => {};
-   scene.add(mesh);
-   return {mesh, count:0};
+   const material = new THREE.MeshBasicMaterial({map:texture, alphaTest:.1, side:THREE.DoubleSide, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2});
+   return {material, batches: [] as {mesh:THREE.InstancedMesh, count:number}[]};
  });
  const splashTransform = new THREE.Object3D();
  function addSplash(x:number, y:number, z:number) {
    const splash = splashes[Math.floor(Math.random()*splashes.length)];
-   splashTransform.position.set(x, y + .035, z);
+   let batch = splash.batches[splash.batches.length - 1];
+   if (!batch || batch.count === 64) {
+     const mesh = new THREE.InstancedMesh(splashGeometry, splash.material, 64);
+     mesh.count = 0;
+     mesh.frustumCulled = false;
+     mesh.raycast = () => {};
+     scene.add(mesh);
+     batch = {mesh, count:0};
+     splash.batches.push(batch);
+   }
+   splashTransform.position.set(x, y + .045, z);
    splashTransform.rotation.set(-Math.PI/2, 0, Math.random()*Math.PI*2);
    splashTransform.scale.set(.8 + Math.random()*.6, .8 + Math.random()*.6, 1);
    splashTransform.updateMatrix();
-   splash.mesh.setMatrixAt(splash.count % 64, splashTransform.matrix);
-   splash.count++;
-   splash.mesh.count = Math.min(splash.count, 64);
-   splash.mesh.instanceMatrix.needsUpdate = true;
+   batch.mesh.setMatrixAt(batch.count++, splashTransform.matrix);
+   batch.mesh.count = batch.count;
+   batch.mesh.instanceMatrix.needsUpdate = true;
+ }
+ function clearBloodStains() {
+   for (const splash of splashes) {
+     for (const batch of splash.batches) {
+       scene.remove(batch.mesh);
+       batch.mesh.dispose();
+     }
+     splash.batches.length = 0;
+   }
  }
  const controller = world.createCharacterController(.02);
  controller.enableSnapToGround(.1);
@@ -334,6 +345,34 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
    damage(zombie, now, amount);
    return true;
  }
+ function closestAimTarget(camera:THREE.Camera, visible:(point:THREE.Vector3)=>boolean) {
+   const candidates:{point:THREE.Vector3, distance:number}[] = [];
+   const position = new THREE.Vector3(), projected = new THREE.Vector3();
+   camera.updateMatrixWorld(true);
+   const aspect = camera instanceof THREE.PerspectiveCamera ? camera.aspect : 1;
+   for (const zombie of zombies) {
+     const p = zombie.body.translation();
+     position.set(p.x, p.y + .08, p.z);
+     projected.copy(position).project(camera);
+     if (projected.z < -1 || projected.z > 1 || Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1) continue;
+     candidates.push({point:position.clone(), distance:Math.hypot(projected.x * aspect, projected.y)});
+   }
+   candidates.sort((a,b) => a.distance - b.distance);
+   return candidates.find(candidate => visible(candidate.point))?.point;
+ }
+ function slice(plane:THREE.Plane, now:number) {
+   let changed = false;
+   const point = new THREE.Vector3();
+   const extent = radius + (zombieHalfHeight - radius) * Math.abs(plane.normal.y);
+   for (let i = zombies.length - 1; i >= 0; i--) {
+     const zombie = zombies[i], position = zombie.body.translation();
+     point.set(position.x, position.y, position.z);
+     if (Math.abs(plane.distanceToPoint(point)) > extent) continue;
+     damage(zombie, now, zombie.health, false);
+     changed = true;
+   }
+   if (changed) renderInstances();
+ }
  function runOver(x:number,z:number,angle:number,now:number,halfWidth=.85,halfLength=1.65) {
    const cos=Math.cos(angle), sin=Math.sin(angle);
    let changed=false;
@@ -393,5 +432,5 @@ export function createRange(scene:THREE.Scene, world:any, R:any, roads:any[], la
    if (nearestHit) renderInstances();
    return nearestHit;
  }
- return {targets,step,update,shoot,runOver,explode,fireShotgun,fireTurret, get ambientTargets() { return {children:zombies.map(zombie => zombie.group)}; }};
+ return {targets,step,update,shoot,closestAimTarget,slice,runOver,explode,fireShotgun,fireTurret,clearBloodStains, get ambientTargets() { return {children:zombies.map(zombie => zombie.group)}; }};
 }

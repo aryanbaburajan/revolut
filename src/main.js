@@ -179,7 +179,7 @@ const range = createRange(scene, world, RAPIER, city.roads, city.layout, streets
   playerHealth = Math.max(0, playerHealth - amount);
   showDamage();
   updateHealth();
-  if (playerHealth === 0) respawnInSky();
+  if (playerHealth === 0) respawnInSky(true);
 }, spawn);
 
 const keys = new Set();
@@ -198,7 +198,7 @@ openingTitle.className = 'opening-title';
 openingTitle.textContent = 'REVOLUT.';
 document.querySelector('#app').appendChild(openingTitle);
 let openingDive = true;
-function respawnInSky() {
+function respawnInSky(clearStains = false) {
   if (skyTransition) return;
   skyTransition = true;
   jumped = false;
@@ -206,6 +206,7 @@ function respawnInSky() {
   skyFade.classList.add('visible');
   setTimeout(() => {
     jumpQueued = false;
+    if (clearStains) range.clearBloodStains();
     player.teleportToSky();
     if (playerHealth === 0) { playerHealth = 100; updateHealth(); }
     player.updateCamera();
@@ -224,12 +225,12 @@ function helicopterCrash(position, occupied) {
     const offset = new THREE.Vector3((Math.random()-.5)*6, (Math.random()-.5)*4+1, (Math.random()-.5)*6);
     setTimeout(() => addExplosion(position.clone().add(offset), performance.now()), i * 55);
   }
-  if (occupied) respawnInSky();
+  if (occupied) respawnInSky(true);
   setTimeout(() => helicopter.respawn(helicopterSpawn), 3000);
 }
 window.addEventListener('keydown', (event) => {
   if (document.pointerLockElement !== renderer.domElement) return;
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
+  if (['Space', 'AltLeft', 'AltRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
   if (event.code === 'KeyF' && !event.repeat) {
     const current = jeep.driving ? jeep : tank.driving ? tank : helicopter.flying ? helicopter : null;
     if (current) {
@@ -308,7 +309,10 @@ const guns = createGunController({ scene, camera, renderer, ground, targets: ran
       audio.impact('concrete', surface.point, now);
     }
   }
-}, onRocketFire: launchRocket });
+}, onRocketFire: launchRocket, onKatanaHit: (hit, direction, now) => {
+  const plane = city.slice(hit, direction, camera);
+  range.slice(plane, now);
+} });
 
 let vehicleFiring = false, turretFiring = false;
 let lastVehicleShot = -Infinity, lastTurretShot = -Infinity;
@@ -503,6 +507,8 @@ const descentFeet = new THREE.Vector3();
 const descentVelocity = new THREE.Vector3();
 const descentRay = new THREE.Raycaster();
 const downDirection = new THREE.Vector3(0, -1, 0);
+const aimObstruction = new THREE.Raycaster();
+const aimDirection = new THREE.Vector3();
 let openingMusicStarted = false;
 function startOpeningMusicBeforeLanding() {
   if (openingMusicStarted) return;
@@ -573,6 +579,7 @@ renderer.setAnimationLoop(() => {
     if (helicopter.flying) camera.quaternion.copy(helicopter.group.quaternion);
     jumpQueued = false;
     range.step(step, camera.position, helicopter.flying ? 'helicopter' : tank.driving ? 'tank' : jeep.driving ? 'jeep' : 'walking');
+    city.updateSlices(step);
     world.timestep = step;
     world.step();
     if (!isDriving()) {
@@ -590,6 +597,21 @@ renderer.setAnimationLoop(() => {
       }
     }
     accumulator -= step;
+  }
+  if ((keys.has('AltLeft') || keys.has('AltRight')) && document.pointerLockElement === renderer.domElement && !tank.driving && !helicopter.flying) {
+    const target = range.closestAimTarget(camera, point => {
+      aimDirection.subVectors(point, camera.position);
+      const distance = aimDirection.length();
+      aimObstruction.set(camera.position, aimDirection.normalize());
+      aimObstruction.far = Math.max(0, distance - .05);
+      return aimObstruction.intersectObjects([ground, ...city.buildingMeshes], false).length === 0;
+    });
+    if (target) {
+      aimDirection.subVectors(target, camera.position);
+      yaw = Math.atan2(-aimDirection.x, -aimDirection.z);
+      pitch = THREE.MathUtils.clamp(Math.atan2(aimDirection.y, Math.hypot(aimDirection.x, aimDirection.z)), -1.35, 1.35);
+      camera.rotation.set(pitch, yaw, 0);
+    }
   }
   fireVehicle(now);
   updateRockets(frameTime, now);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createWeaponWheel } from './weapon-wheel.js';
 
-export function createGunController({ scene, camera, renderer, ground, targets, buildings, onHit, onShotgunHit, onRocketFire, audio, isDriving = () => false }) {
+export function createGunController({ scene, camera, renderer, ground, targets, buildings, onHit, onShotgunHit, onRocketFire, onKatanaHit, audio, isDriving = () => false }) {
   scene.add(camera);
   const viewScene = new THREE.Scene();
   const viewCamera = new THREE.PerspectiveCamera();
@@ -21,16 +21,25 @@ export function createGunController({ scene, camera, renderer, ground, targets, 
     { name: 'Assault rifle', hip: sprite('ak47-ink.png', 1.4, .46), ground: sprite('ak47-ink.png', 1.3, .43, 4), ammo: 30, cap: 30, interval: 100, reload: 1800 },
     { name: 'Shotgun', hip: sprite('shotgun-sprite.png', 1.5, 1.5 * 180 / 1180), ground: sprite('shotgun-sprite.png', 1.4, 1.4 * 180 / 1180, 4), ammo: 8, cap: 8, interval: 750, reload: 2200 },
     { name: 'Rocket launcher', hip: sprite('rocket-launcher.png', 1.5, 1.5 * 253 / 1154), ground: sprite('rocket-launcher.png', 1.4, 1.4 * 253 / 1154, 4), ammo: 1, cap: 1, interval: 900, reload: 2500 },
+    { name: 'Katana', hip: sprite('katana-sprite.png', 1.8, 1.8 * 118 / 1172), ground: sprite('katana-sprite.png', 1.8, 1.8 * 118 / 1172, 4), melee: true, interval: 650, reload: 1200 },
   ];
   models.forEach((g, i) => { viewScene.add(g.hip); g.ground.scale.setScalar(.5); g.ground.rotation.set(-Math.PI / 2, 0, 0, 'YXZ'); g.ground.position.set(i ? 1.8 : 1.4, .07, i ? 1.8 : 2.2); scene.add(g.ground); });
   // The current scene starts equipped; the second gun can be selected by scrolling.
   let selected = 0, held = true, firing = false, lastShot = -Infinity, reloadEnd = 0, recoilImpulse = 0, recoilDisplay = 0, raise = 0;
+  let katanaSwingStarted = -Infinity, katanaStrikePending = false;
   const hud = document.createElement('div'); hud.className = 'ammo-display'; document.querySelector('#app').append(hud);
   const showWheel = createWeaponWheel(document.querySelector('#app'));
   const ray = new THREE.Raycaster();
-  function updateHud() { const gun = models[selected]; hud.textContent = held ? `${gun.ammo} / ${gun.cap}${reloadEnd ? ' · Reloading' : ''}` : 'Unarmed'; }
+  function updateHud() { const gun = models[selected]; hud.textContent = held ? (gun.melee ? `KATANA${reloadEnd ? ' · Reloading' : ''}` : `${gun.ammo} / ${gun.cap}${reloadEnd ? ' · Reloading' : ''}`) : 'Unarmed'; }
   function shoot(now) {
     const gun = models[selected]; if (!held || reloadEnd || now - lastShot < gun.interval) return;
+    if (gun.melee) {
+      lastShot = now;
+      katanaSwingStarted = now;
+      katanaStrikePending = true;
+      audio.play('katana');
+      return;
+    }
     if (!gun.ammo) { reload(); return; }
     recoilSide = (Math.random() - .5) * .18;
     audio.play(selected === 3 ? 'cannon' : selected === 2 ? 'shotgun' : selected === 1 ? 'rifle' : 'pistol');
@@ -55,7 +64,8 @@ export function createGunController({ scene, camera, renderer, ground, targets, 
   }
   function reload() {
     const gun = models[selected];
-    if (!held || reloadEnd || gun.ammo >= gun.cap) return;
+    if (!held || reloadEnd || (!gun.melee && gun.ammo >= gun.cap)) return;
+    if (gun.melee && nowInKatanaSwing()) return;
     reloadEnd = performance.now() + gun.reload;
     audio.play('reload');
     updateHud();
@@ -65,9 +75,12 @@ export function createGunController({ scene, camera, renderer, ground, targets, 
   function pickup() { let nearest = -1, distance = 1.6; models.forEach((gun, i) => { if (!gun.ground.visible) return; const d = Math.hypot(gun.ground.position.x - camera.position.x, gun.ground.position.z - camera.position.z); if (d < distance) { distance = d; nearest = i; } }); if (nearest >= 0) { selected = nearest; held = true; followReady = false; reloadEnd = 0; firing = false; models[selected].ground.visible = false; updateHud(); } }
   models.forEach(g => g.ground.visible = false);
   const locked = () => document.pointerLockElement === renderer.domElement && !isDriving();
+  const nowInKatanaSwing = () => performance.now() - katanaSwingStarted < 650;
   function selectWeapon(index) {
     if (models[index].ground.visible || (held && index === selected)) return;
     selected = index;
+    katanaStrikePending = false;
+    katanaSwingStarted = -Infinity;
     held = true;
     followReady = false;
     reloadEnd = 0;
@@ -76,7 +89,7 @@ export function createGunController({ scene, camera, renderer, ground, targets, 
     updateHud();
   }
 
-  const weaponKeys = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 };
+  const weaponKeys = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4 };
   window.addEventListener('keydown', event => {
     if (!locked() || event.repeat) return;
     const weapon = weaponKeys[event.code];
@@ -88,8 +101,8 @@ export function createGunController({ scene, camera, renderer, ground, targets, 
   window.addEventListener('contextmenu', e => e.preventDefault());
   window.addEventListener('mousedown', e => { if (!locked()) return; if (e.button === 0) { firing = true; shoot(performance.now()); } });
   window.addEventListener('mouseup', e => { if (e.button === 0) firing = false; });
-  window.addEventListener('blur', () => { firing = false; });
-  document.addEventListener('pointerlockchange', () => { if (!locked()) firing = false; });
+  window.addEventListener('blur', () => { firing = false; katanaStrikePending = false; });
+  document.addEventListener('pointerlockchange', () => { if (!locked()) { firing = false; katanaStrikePending = false; } });
   window.addEventListener('wheel', e => { if (!locked() || !e.deltaY || !held) return; e.preventDefault(); let next = selected; do { next = (next + (e.deltaY > 0 ? 1 : models.length - 1)) % models.length; } while (next !== selected && models[next].ground.visible); selectWeapon(next); }, { passive: false });
   updateHud();
   const values = {'held-size':.5,'held-x':.3,'held-y':-.13,'held-z':-.8};
@@ -172,8 +185,18 @@ export function createGunController({ scene, camera, renderer, ground, targets, 
     },
     update(dt, now, velocity) {
       hud.style.display = isDriving() ? 'none' : '';
-      if (reloadEnd && now >= reloadEnd) { models[selected].ammo = models[selected].cap; reloadEnd = 0; updateHud(); }
+      if (reloadEnd && now >= reloadEnd) { if (!models[selected].melee) models[selected].ammo = models[selected].cap; reloadEnd = 0; updateHud(); }
       if (isDriving()) firing = false;
+      if (katanaStrikePending && (!held || !models[selected].melee || !locked())) katanaStrikePending = false;
+      if (katanaStrikePending && now - katanaSwingStarted >= 270) {
+        katanaStrikePending = false;
+        camera.updateMatrixWorld(true);
+        ray.setFromCamera(new THREE.Vector2(), camera);
+        const hit = ray.intersectObjects([ground, ...buildings, targets], true)
+          .find(item => item.object instanceof THREE.Mesh && !item.object.userData.impact);
+        const point = hit ? hit.point : ray.ray.at(30, new THREE.Vector3());
+        onKatanaHit({ point }, ray.ray.direction, now);
+      }
       if (firing && selected === 1 && locked()) shoot(now);
       recoilDisplay += (recoilImpulse - recoilDisplay) * (1 - Math.exp(-45 * dt)); recoilImpulse *= Math.exp(-9 * dt);
       for (const [i, gun] of models.entries()) {
@@ -181,6 +204,20 @@ export function createGunController({ scene, camera, renderer, ground, targets, 
       }
       if (held) {
         updateGunFollow(dt, recoilDisplay, now, velocity);
+        if (models[selected].melee && !reloadEnd) {
+          const progress = (now - katanaSwingStarted) / 650;
+          if (progress >= 0 && progress < 1) {
+            const smooth = t => t * t * (3 - 2 * t);
+            let sweep;
+            if (progress < .2) sweep = .2 * smooth(progress / .2);
+            else if (progress < .52) sweep = THREE.MathUtils.lerp(.2, -1, smooth((progress - .2) / .32));
+            else sweep = -1 + smooth((progress - .52) / .48);
+            const sword = models[selected].hip;
+            sword.position.x += sweep * .65;
+            sword.position.y += Math.abs(sweep) * .12;
+            sword.quaternion.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, sweep * .35, -sweep * .9)));
+          }
+        }
         if (reloadEnd) {
           const gun = models[selected].hip;
           const elapsed = models[selected].reload - (reloadEnd - now);
@@ -189,7 +226,9 @@ export function createGunController({ scene, camera, renderer, ground, targets, 
           const rotations = Math.round(models[selected].reload / 1000 * 4);
           const angle = eased * Math.PI * 2 * rotations;
           // The grip is the hold point in each sprite's local coordinates.
-          const grip = selected === 1
+          const grip = models[selected].melee
+            ? new THREE.Vector3(-.67, 0, 0)
+            : selected === 1
             ? new THREE.Vector3(-0.12, -0.08, 0)
             : new THREE.Vector3(-0.12, -0.12, 0);
           const scaledGrip = grip.multiply(gun.scale);

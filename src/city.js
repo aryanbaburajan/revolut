@@ -1,6 +1,7 @@
 import {streetLayout} from './street-layout.js';
 import {facadeMaterial} from './facades.js';
 import * as THREE from 'three';
+import { sliceBuilding } from './building-slice.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export const roadWidths = { motorway: 12, trunk: 10, primary: 8, secondary: 7, tertiary: 6, residential: 4, service: 3, track: 2, path: 1.2, footway: 1.2 };
@@ -42,6 +43,7 @@ export async function createCity(scene, world, RAPIER, cityId) {
   const blocks = new Map();
   const buildings = [];
   const buildingColliderHandles = new Set();
+  const records = new Map(), floating = [], fragments = new Set();
   for (const [index, building] of data.buildings.entries()) {
     if (building.points.length < 3) continue;
     const shape = new THREE.Shape();
@@ -55,21 +57,74 @@ export async function createCity(scene, world, RAPIER, cityId) {
     for(let i=0;i<attribute.count;i++) attribute.setXYZ(i,index,height/facade.floors,facade.shop?2:height>=25?1:0);
     geometry.setAttribute('facadeData',attribute);
     const key = Math.floor(facade.bounds[0] / 64) + ',' + Math.floor(facade.bounds[1] / 64);
-    if (!blocks.has(key)) blocks.set(key, { walls: [], edges: [] });
+    if (!blocks.has(key)) blocks.set(key, { walls: [], edges: [], records: [] });
     const block = blocks.get(key);
     block.walls.push(geometry);
     block.edges.push(new THREE.EdgesGeometry(geometry));
     const position = geometry.getAttribute('position');
     const vertices = new Float32Array(position.array);
     const indices = geometry.index ? new Uint32Array(geometry.index.array) : Uint32Array.from({ length: position.count }, (_, i) => i);
-    buildingColliderHandles.add(world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices)).handle);
+    const collider = world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices));
+    buildingColliderHandles.add(collider.handle);
+    geometry.computeBoundingBox();
+    const record = { geometry, collider, footprint: building.points, height, cut: false };
+    block.records.push(record);
+    records.set(index, { record, block });
   }
   for (const block of blocks.values()) {
     const mesh = new THREE.Mesh(mergeGeometries(block.walls), buildingMaterial);
-    mesh.add(new THREE.LineSegments(mergeGeometries(block.edges), ink));
+    const edges = new THREE.LineSegments(mergeGeometries(block.edges), ink);
+    mesh.add(edges);
     buildings.push(mesh);
     scene.add(mesh);
-    for (const geometry of [...block.walls, ...block.edges]) geometry.dispose();
+    block.rebuild = () => {
+      const active = block.records.filter(record => !record.cut);
+      mesh.geometry.dispose();
+      edges.geometry.dispose();
+      if (!active.length) { mesh.visible = false; mesh.raycast = () => {}; return; }
+      mesh.geometry = mergeGeometries(active.map(record => record.geometry));
+      const outlines = active.map(record => new THREE.EdgesGeometry(record.geometry));
+      edges.geometry = mergeGeometries(outlines);
+      outlines.forEach(geometry => geometry.dispose());
+    };
+    block.edges.forEach(geometry => geometry.dispose());
   }
-  return { ...data, layout, buildingMeshes: buildings, buildingColliderHandles };
+  function slice(hit, direction, camera) {
+    const horizontal = new THREE.Vector3(direction.x, 0, direction.z);
+    if (horizontal.lengthSq() < 1e-8) horizontal.set(0, 0, -1);
+    horizontal.normalize();
+    const side = new THREE.Vector3(-horizontal.z, 0, horizontal.x);
+    const angle = (Math.random() - .5) * Math.PI / 2;
+    const normal = new THREE.Vector3(0, 1, 0).addScaledVector(side, -Math.tan(angle)).normalize();
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, hit.point);
+    camera.updateMatrixWorld(true);
+    const frustum = new THREE.Frustum().setFromProjectionMatrix(
+      new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+    );
+    const existingFragments = [...fragments];
+    const changedBlocks = new Set();
+    for (const { record, block } of records.values()) {
+      if (record.cut || !frustum.intersectsBox(record.geometry.boundingBox) || !record.geometry.boundingBox.intersectsPlane(plane)) continue;
+      if (sliceBuilding({ scene, world, R: RAPIER, record, buildings, handles: buildingColliderHandles, material: buildingMaterial, ink, plane, floating, fragments })) changedBlocks.add(block);
+    }
+    const bounds = new THREE.Box3();
+    for (const record of existingFragments) {
+      if (record.cut) continue;
+      bounds.copy(record.geometry.boundingBox).translate(new THREE.Vector3(0, record.y, 0));
+      if (!frustum.intersectsBox(bounds) || !bounds.intersectsPlane(plane)) continue;
+      sliceBuilding({ scene, world, R: RAPIER, record, buildings, handles: buildingColliderHandles, material: buildingMaterial, ink, plane, floating, fragments });
+    }
+    for (const block of changedBlocks) block.rebuild();
+    return plane;
+  }
+  function updateSlices(dt) {
+    for (const part of floating) {
+      const decay = Math.exp(-3 * dt);
+      part.y += .4 * dt + part.velocity * (1 - decay) / 3;
+      part.velocity *= decay;
+      part.mesh.position.y = part.y;
+      part.body.setNextKinematicTranslation({ x: 0, y: part.y, z: 0 });
+    }
+  }
+  return { ...data, layout, buildingMeshes: buildings, buildingColliderHandles, slice, updateSlices };
 }
